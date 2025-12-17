@@ -1,0 +1,18 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# LLM Providers
+openai>=1.0.0
+
+# Embedding Providers
+sentence-transformers>=2.2.0
+
+# Vector Database Providers
+qdrant-client>=1.7.0
+# pinecone-client>=2.2.0  # Uncomment if using Pinecone
+# weaviate-client>=3.24.0  # Uncomment if using Weaviate
+# chromadb>=0.4.0  # Uncomment if using ChromaDB
+
