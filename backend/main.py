@@ -11,7 +11,7 @@ from datetime import datetime
 import os
 
 # Import required services
-from services import LLMService, EmbeddingService, VectorDBService
+from services import LLMService, EmbeddingService, VectorDBService, MemoryService
 from config import Config
 
 app = FastAPI(title="RazorSearch API", version="1.0.0")
@@ -20,6 +20,7 @@ app = FastAPI(title="RazorSearch API", version="1.0.0")
 llm_service = None
 embedding_service = None
 vector_db_service = None
+memory_service = None
 
 try:
     embedding_service = EmbeddingService()
@@ -44,6 +45,13 @@ except Exception as e:
     print(f"⚠ LLM Service initialization failed: {e}")
     print("WARNING: LLM service is optional. Query enrichment will be disabled.")
 
+try:
+    memory_service = MemoryService()
+    print("✓ Memory Service initialized")
+except Exception as e:
+    print(f"⚠ Memory Service initialization failed: {e}")
+    print("WARNING: Memory service is optional. Query memory features will be disabled.")
+
 # CORS middleware to allow frontend to call the API
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +68,7 @@ class SearchRequest(BaseModel):
     filters: Optional[dict] = None
     session_id: Optional[str] = None
     include_context: Optional[bool] = False
+    user_id: Optional[str] = None  # For memory features
 
 
 class SearchResult(BaseModel):
@@ -76,6 +85,7 @@ class SearchResponse(BaseModel):
     total: int
     enriched_query: Optional[str] = None
     cache_hit: Optional[bool] = False
+    memory: Optional[dict] = None  # Memory features: suggestions, history, etc.
 
 
 @app.post("/api/v1/search", response_model=SearchResponse)
@@ -167,12 +177,128 @@ async def search(request: SearchRequest):
         for result in vector_results
     ]
     
+    # Step 6: Memory features (if available)
+    memory_data = None
+    if memory_service:
+        try:
+            # Get similar queries for suggestions
+            similar_queries = memory_service.get_similar_queries(
+                query=original_query,
+                limit=3,
+                user_id=request.user_id,
+                min_score=0.7
+            )
+            
+            # Get recent history
+            recent_history = memory_service.get_query_history(
+                user_id=request.user_id,
+                limit=5
+            )
+            
+            # Extract sources from filters if available
+            sources_searched = []
+            if request.filters and "sources" in request.filters:
+                sources_searched = request.filters["sources"] if isinstance(request.filters["sources"], list) else [request.filters["sources"]]
+            
+            # Save query to memory
+            memory_service.save_query(
+                query=original_query,
+                user_id=request.user_id,
+                sources_searched=sources_searched,
+                result_count=len(results)
+            )
+            
+            memory_data = {
+                "similar_queries": similar_queries,
+                "recent_history": recent_history,
+                "suggestions": [sq["query"] for sq in similar_queries[:3]]
+            }
+        except Exception as e:
+            print(f"⚠ Memory features failed: {e}")
+            memory_data = None
+    
     return SearchResponse(
         results=results,
         total=len(results),
         enriched_query=enriched_query,
-        cache_hit=False
+        cache_hit=False,
+        memory=memory_data
     )
+
+
+# Memory endpoints
+@app.get("/api/v1/memory/suggestions")
+async def get_suggestions(q: str = "", user_id: Optional[str] = None):
+    """Get query suggestions for autocomplete"""
+    if not memory_service:
+        return {"suggestions": []}
+    
+    if not q or len(q) < 2:
+        return {"suggestions": []}
+    
+    try:
+        similar = memory_service.get_similar_queries(
+            query=q,
+            limit=5,
+            user_id=user_id,
+            min_score=0.6
+        )
+        return {"suggestions": [s["query"] for s in similar]}
+    except Exception as e:
+        print(f"⚠ Suggestions failed: {e}")
+        return {"suggestions": []}
+
+
+@app.get("/api/v1/memory/history")
+async def get_history(user_id: Optional[str] = None, limit: int = 20):
+    """Get user's query history"""
+    if not memory_service:
+        return {"history": []}
+    
+    try:
+        history = memory_service.get_query_history(user_id=user_id, limit=limit)
+        return {"history": history}
+    except Exception as e:
+        print(f"⚠ History failed: {e}")
+        return {"history": []}
+
+
+@app.get("/api/v1/memory/popular")
+async def get_popular(limit: int = 10, days: int = 7):
+    """Get popular/trending queries"""
+    if not memory_service:
+        return {"popular": []}
+    
+    try:
+        popular = memory_service.get_popular_queries(limit=limit, days_back=days)
+        return {"popular": popular}
+    except Exception as e:
+        print(f"⚠ Popular queries failed: {e}")
+        return {"popular": []}
+
+
+class ClickRequest(BaseModel):
+    query: str
+    result_id: str
+    user_id: Optional[str] = None
+
+
+@app.post("/api/v1/memory/click")
+async def track_click(request: ClickRequest):
+    """Track when user clicks on a search result"""
+    if not memory_service:
+        return {"status": "ok", "message": "Memory service not available"}
+    
+    try:
+        memory_service.update_query_click(
+            query=request.query,
+            result_id=request.result_id,
+            user_id=request.user_id
+        )
+        return {"status": "ok", "message": "Click tracked"}
+    except Exception as e:
+        print(f"⚠ Click tracking failed: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 if __name__ == "__main__":
