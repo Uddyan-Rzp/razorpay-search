@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { highlightUrls } from "../utils/urlHighlighter";
 import "./SearchPage.css";
 
@@ -95,15 +95,17 @@ const SearchPage = () => {
       const data: SearchResponse = await response.json();
       setResults(data.results);
       
-      // Update history and suggestions from memory
+      // Update history from memory (but don't show suggestions after search)
       if (data.memory) {
         if (data.memory.recent_history) {
           setHistory(data.memory.recent_history);
         }
-        if (data.memory.suggestions) {
-          setSuggestions(data.memory.suggestions);
-        }
+        // Don't update suggestions after search - they should only show while typing
       }
+      
+      // Clear suggestions after search
+      setSuggestions([]);
+      setShowSuggestions(false);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "An error occurred while searching"
@@ -162,16 +164,20 @@ const SearchPage = () => {
               placeholder="Enter your search query..."
               value={query}
               onChange={handleChange}
-              onFocus={() => query.length >= 2 && setShowSuggestions(true)}
+              onFocus={() => {
+                if (query.length >= 2 && !hasSearched) {
+                  setShowSuggestions(true);
+                }
+              }}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              onKeyDown={(e) => {
+                // Hide suggestions when Enter is pressed
+                if (e.key === 'Enter') {
+                  setShowSuggestions(false);
+                }
+              }}
               disabled={isLoading}
-              list="suggestions-list"
             />
-            <datalist id="suggestions-list">
-              {suggestions.map((suggestion, idx) => (
-                <option key={idx} value={suggestion} />
-              ))}
-            </datalist>
             <button
               type="submit"
               className="search-button"
@@ -181,8 +187,8 @@ const SearchPage = () => {
             </button>
           </div>
           
-          {/* Suggestions Dropdown */}
-          {showSuggestions && suggestions.length > 0 && (
+          {/* Suggestions Dropdown - only show when typing, not after search */}
+          {showSuggestions && suggestions.length > 0 && !hasSearched && (
             <div className="suggestions-dropdown">
               {suggestions.map((suggestion, idx) => (
                 <div
