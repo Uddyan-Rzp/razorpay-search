@@ -67,6 +67,8 @@ class SearchResult(BaseModel):
     source: str  # 'slack' or 'github'
     title: str
     snippet: str
+    content: str  # Full content
+    summary: Optional[str] = None  # LLM-generated summary
     perma_link: str
     metadata: dict
 
@@ -151,21 +153,36 @@ async def search(request: SearchRequest):
             detail=f"Vector database search failed: {str(e)}"
         )
     
-    # Step 5: Convert to SearchResult format
-    results = [
-        SearchResult(
-            id=result.get("id", ""),
-            source=result.get("source", ""),
-            title=result.get("title", ""),
-            snippet=result.get("snippet", ""),
-            perma_link=result.get("perma_link", ""),
-            metadata={
-                **result.get("metadata", {}),
-                "score": result.get("score", 0.0)
-            }
+    # Step 5: Convert to SearchResult format and generate summaries
+    results = []
+    for result in vector_results:
+        # Generate LLM summary for each result (if LLM service is available)
+        summary = None
+        if llm_service:
+            try:
+                summary = await llm_service.summarize_content(
+                    content=result.get("content", ""),
+                    source=result.get("source", ""),
+                    query=original_query
+                )
+            except Exception as e:
+                print(f"⚠️  Summary generation failed for result {result.get('id', '')}: {e}")
+        
+        results.append(
+            SearchResult(
+                id=result.get("id", ""),
+                source=result.get("source", ""),
+                title=result.get("title", ""),
+                snippet=result.get("snippet", ""),
+                content=result.get("content", ""),
+                summary=summary,
+                perma_link=result.get("perma_link", ""),
+                metadata={
+                    **result.get("metadata", {}),
+                    "score": result.get("score", 0.0)
+                }
+            )
         )
-        for result in vector_results
-    ]
     
     return SearchResponse(
         results=results,

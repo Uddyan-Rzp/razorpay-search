@@ -79,6 +79,55 @@ Return only the enhanced query, nothing else."""
             else:
                 raise Exception(f"LLM query enrichment failed: {error_type}: {error_msg}")
     
+    async def summarize_content(self, content: str, source: str, query: str) -> Optional[str]:
+        """
+        Summarize content from a search result in the context of the user's query.
+        
+        Args:
+            content: The full content to summarize
+            source: The source type ('slack' or 'github')
+            query: The original search query for context
+            
+        Returns:
+            A concise summary or None if summarization fails
+        """
+        try:
+            # Truncate content if too long (keep first 2000 chars to stay within token limits)
+            truncated_content = content[:2000]
+            if len(content) > 2000:
+                truncated_content += "...[truncated]"
+            
+            source_context = "Slack conversation" if source == "slack" else "GitHub documentation"
+            
+            prompt = f"""Summarize the following {source_context} in the context of the user's search query: "{query}"
+
+Content:
+{truncated_content}
+
+Provide a concise 2-3 sentence summary that:
+1. Highlights the most relevant information related to the query
+2. Captures the key technical details or decisions
+3. Is clear and easy to understand
+
+Summary:"""
+
+            response = self.client.chat.completions.create(
+                model=self.deployment,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that creates concise, relevant summaries of technical content."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=150
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            return summary if summary else None
+            
+        except Exception as e:
+            print(f"⚠️  Content summarization failed: {type(e).__name__}: {e}")
+            return None
+    
     async def generate_context(self, query: str, results: list) -> Optional[str]:
         """
         Generate contextual summary or answer based on search results.

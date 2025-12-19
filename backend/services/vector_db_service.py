@@ -116,16 +116,85 @@ class VectorDBService:
                 result_id = payload.get("original_id", str(result.id))
                 # Get score from result (Qdrant returns score in the result)
                 score = getattr(result, 'score', 0.0)
+                
+                # Extract content and metadata from ingestion format
+                content = payload.get("content", "")
+                source = payload.get("source", "")
+                
+                # Generate title based on source type
+                title = ""
+                if source == "github":
+                    doc_type = payload.get("type", "")
+                    repo = payload.get("repo", "")
+                    if doc_type == "pr":
+                        # Extract PR title from content (first line after "PR #X – ")
+                        lines = content.split('\n')
+                        if lines:
+                            first_line = lines[0].strip()
+                            if '–' in first_line:
+                                title = first_line.split('–', 1)[1].strip()
+                            else:
+                                title = first_line
+                    elif doc_type == "readme":
+                        title = f"{repo} README"
+                    elif doc_type == "commit":
+                        title = f"{repo} - Recent Commits"
+                    else:
+                        title = f"{repo} - {doc_type}"
+                elif source == "slack":
+                    channel = payload.get("channel", "")
+                    # Extract first line of message as title (remove user ID prefix)
+                    lines = content.split('\n')
+                    first_line = ""
+                    for line in lines:
+                        line = line.strip()
+                        if line and not line.startswith('---') and line != '--- Thread Replies ---':
+                            first_line = line
+                            break
+                    
+                    if first_line:
+                        # Remove Slack user ID prefix like [U02RUKV5QF9]:
+                        if first_line.startswith('[') and ']:' in first_line:
+                            first_line = first_line.split(']:', 1)[1].strip()
+                        # Truncate to reasonable title length
+                        title = first_line[:150] if len(first_line) > 150 else first_line
+                    
+                    if not title:
+                        title = f"Message in {channel}"
+                else:
+                    title = "Document"
+                
+                # Generate snippet (first 300 chars of content, cleaned up)
+                snippet_text = content
+                
+                # For Slack messages, clean up user IDs and thread markers
+                if source == "slack":
+                    # Remove user ID prefixes like [U02RUKV5QF9]:
+                    import re
+                    snippet_text = re.sub(r'\[U[A-Z0-9]+\]:\s*', '', snippet_text)
+                    # Remove thread replies section
+                    if '--- Thread Replies ---' in snippet_text:
+                        snippet_text = snippet_text.split('--- Thread Replies ---')[0].strip()
+                
+                # Truncate to reasonable length
+                snippet_text = snippet_text[:300].strip()
+                if len(content) > 300:
+                    snippet_text += "..."
+                
+                # Get permalink from url field
+                perma_link = payload.get("url", "")
+                
                 formatted_results.append({
                     "id": result_id,
                     "score": score,
-                    "title": payload.get("title", ""),
-                    "snippet": payload.get("snippet", ""),
-                    "source": payload.get("source", ""),
-                    "perma_link": payload.get("perma_link", ""),
+                    "title": title,
+                    "snippet": snippet_text,
+                    "content": content,  # Include full content for reference
+                    "source": source,
+                    "perma_link": perma_link,
                     "metadata": {
                         k: v for k, v in payload.items()
-                        if k not in ["title", "snippet", "source", "perma_link", "original_id"]
+                        if k not in ["content", "original_id"]
                     }
                 })
             

@@ -7,13 +7,32 @@ interface SearchResult {
   source: string;
   title: string;
   snippet: string;
+  content: string;
+  summary?: string;  // LLM-generated summary
   perma_link: string;
   metadata: {
-    author?: string;
-    date?: string;
-    channel?: string;
-    repo?: string;
+    // Common fields
+    tenant_id?: string;
     score?: number;
+    
+    // GitHub fields
+    repo?: string;
+    type?: string;  // 'readme', 'pr', 'commit'
+    author?: string;
+    merged_at?: string;
+    base_branch?: string;
+    branch?: string;
+    commit_count?: number;
+    
+    // Slack fields
+    channel?: string;
+    channel_id?: string;
+    timestamp?: string;
+    has_thread?: boolean;
+    thread_reply_count?: number;
+    
+    // Common
+    url?: string;
   };
 }
 
@@ -155,6 +174,82 @@ interface SearchResultCardProps {
 }
 
 const SearchResultCard = ({ result }: SearchResultCardProps) => {
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return null;
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatSlackUserId = (userId: string) => {
+    // Format Slack user ID to be more readable
+    if (userId && userId.startsWith('U') && userId.length > 5) {
+      return `User ${userId.substring(0, 8)}...`;
+    }
+    return userId;
+  };
+
+  const renderMetadata = () => {
+    const parts: string[] = [];
+    
+    if (result.source === "github") {
+      if (result.metadata.repo) {
+        parts.push(`Repo: ${result.metadata.repo}`);
+      }
+      if (result.metadata.type) {
+        const typeLabel = result.metadata.type === "pr" ? "Pull Request" 
+                        : result.metadata.type === "readme" ? "README"
+                        : result.metadata.type === "commit" ? "Commits"
+                        : result.metadata.type;
+        parts.push(`Type: ${typeLabel}`);
+      }
+      if (result.metadata.author) {
+        parts.push(`Author: ${result.metadata.author}`);
+      }
+      if (result.metadata.merged_at) {
+        const formattedDate = formatDate(result.metadata.merged_at);
+        if (formattedDate) parts.push(`Merged: ${formattedDate}`);
+      }
+      if (result.metadata.base_branch) {
+        parts.push(`Branch: ${result.metadata.base_branch}`);
+      }
+      if (result.metadata.commit_count) {
+        parts.push(`${result.metadata.commit_count} commits`);
+      }
+    } else if (result.source === "slack") {
+      if (result.metadata.channel) {
+        parts.push(`${result.metadata.channel}`);
+      }
+      if (result.metadata.timestamp) {
+        const date = new Date(parseFloat(result.metadata.timestamp) * 1000);
+        const formattedDate = date.toLocaleDateString('en-US', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        parts.push(formattedDate);
+      }
+      if (result.metadata.has_thread && result.metadata.thread_reply_count) {
+        parts.push(`💬 ${result.metadata.thread_reply_count} ${result.metadata.thread_reply_count === 1 ? 'reply' : 'replies'}`);
+      }
+    }
+    
+    if (result.metadata.score !== undefined) {
+      parts.push(`Relevance: ${(result.metadata.score * 100).toFixed(0)}%`);
+    }
+    
+    return parts.join(" • ");
+  };
+
   return (
     <div className="result-card">
       <div className="result-header">
@@ -164,17 +259,28 @@ const SearchResultCard = ({ result }: SearchResultCardProps) => {
         </span>
       </div>
       <div className="result-body">
-        <div className="result-snippet">{highlightUrls(result.snippet)}</div>
-        <div className="result-link-section">
-          <strong>Link:</strong> {highlightUrls(result.perma_link, true)}
-        </div>
-        {result.metadata.author && (
-          <div className="result-metadata">
-            {result.source === "slack" ? "Channel" : "Repo"}:{" "}
-            {result.metadata.channel || result.metadata.repo} • Author:{" "}
-            {result.metadata.author} • {result.metadata.date}
+        {result.summary && (
+          <div className="result-summary">
+            <div className="summary-icon">💡</div>
+            <div className="summary-text">{result.summary}</div>
           </div>
         )}
+        <div className="result-snippet">{highlightUrls(result.snippet)}</div>
+        <div className="result-footer">
+          {renderMetadata() && (
+            <div className="result-metadata">{renderMetadata()}</div>
+          )}
+          {result.perma_link && (
+            <a 
+              href={result.perma_link} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="result-link"
+            >
+              View {result.source === "slack" ? "in Slack" : "on GitHub"} →
+            </a>
+          )}
+        </div>
       </div>
     </div>
   );
